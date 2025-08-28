@@ -1,0 +1,55 @@
+import os
+import warnings
+import logging
+import sounddevice as sd
+from scipy.io.wavfile import write
+import nemo.collections.asr as nemo_asr
+
+# --- 0. SILENCE LOGGING ---
+os.environ["NEMO_LOG_LEVEL"] = "ERROR"  # Must be set before importing NeMo
+warnings.filterwarnings("ignore")
+logging.disable(logging.CRITICAL)
+
+# --- 1. DEFINE RECORDING PARAMETERS ---
+SAMPLE_RATE = 16000  # 16kHz, required by the NeMo model
+DURATION = 10   # seconds
+TEMP_AUDIO_PATH = "temp_mic_audio.wav"
+
+# --- 2. RECORD AUDIO FROM MICROPHONE ---
+print("Recording for 10 seconds... ")
+# Record audio, ensuring it's mono (channels=1) and using a standard data type
+recording = sd.rec(
+    int(DURATION * SAMPLE_RATE),
+    samplerate=SAMPLE_RATE,
+    channels=1,
+    dtype='int16'
+)
+sd.wait()  # Wait for the recording to finish
+print("Recording complete.")
+
+# --- 3. SAVE THE RECORDING TO A TEMPORARY FILE ---
+write(TEMP_AUDIO_PATH, SAMPLE_RATE, recording)
+
+# --- 4. LOAD THE ASR MODEL ---
+# This model is specifically for Arabic speech-to-text
+asr_model = nemo_asr.models.EncDecHybridRNNTCTCModel.from_pretrained(
+    model_name="nvidia/stt_ar_fastconformer_hybrid_large_pcd_v1.0"
+)
+
+# --- 5. TRANSCRIBE THE RECORDED FILE ---
+print("Transcribing audio...")
+results = asr_model.transcribe(
+    [TEMP_AUDIO_PATH],
+    return_hypotheses=True,  # Ensures we can access .text
+    verbose=False            # Disables the progress bar
+)
+
+# --- 6. PRINT ONLY THE TRANSCRIPT ---
+if results and results[0].text:
+    print("\nTranscript:")
+    print(results[0].text)
+else:
+    print("Could not transcribe the audio.")
+
+# --- 7. CLEAN UP ---
+os.remove(TEMP_AUDIO_PATH)
