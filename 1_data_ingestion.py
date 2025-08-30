@@ -3,13 +3,17 @@ from bs4 import BeautifulSoup
 import fitz  # PyMuPDF
 import os
 
+import requests
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- Web Scraping ---
 def scrape_urls(urls):
     """Scrapes the text content from a list of URLs."""
     all_text = ""
     for url in urls:
         try:
-            response = requests.get(url)
+            response = requests.get(url, verify=False)
             response.raise_for_status()  # Raise an exception for bad status codes
             soup = BeautifulSoup(response.content, 'html.parser')
             # Extract text from the body, you might need to adjust this
