@@ -8,6 +8,11 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma # <-- Import Chroma
 from langchain_community.document_loaders import TextLoader
 
+import requests
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # --- Configuration ---
 DATA_PATH = 'data/combined_text.txt'
 # Use a different path for the new DB
@@ -23,7 +28,7 @@ def scrape_urls(urls):
     all_text = ""
     for url in urls:
         try:
-            response = requests.get(url)
+            response = requests.get(url, verify=False)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
             all_text += soup.get_text(separator='\n', strip=True) + "\n\n"
