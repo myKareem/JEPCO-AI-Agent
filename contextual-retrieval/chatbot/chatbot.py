@@ -25,9 +25,7 @@ faiss_index = faiss.read_index('indexes/faiss_index.bin')
 OLLAMA_MODEL = "qwen3:8b"
 
 print("Loading complete.")
-#rint("FAISS index dimension:", faiss_index.d)
-#test_embedding = embedding_model.encode("اختبار", convert_to_numpy=True)
-#print("Embedding model dimension:", test_embedding.shape[0])
+
 # --- 2. DEFINE THE HYBRID SEARCH FUNCTION ---
 def hybrid_search(query, k=10):
     # BM25 Search (Keyword)
@@ -66,7 +64,7 @@ def hybrid_search(query, k=10):
     # Return the original content of the top documents
     return [data[i]['original_content'] for i in sorted_indices]
 
-# --- 3. OLLAMA GENERATION FUNCTION ---
+# --- 3. OLLAMA GENERATION FUNCTIONS ---
 def generate_with_ollama(system_prompt, user_prompt):
     response = ollama.chat(
         model=OLLAMA_MODEL,
@@ -77,6 +75,31 @@ def generate_with_ollama(system_prompt, user_prompt):
         think=False
     )
     return response["message"]["content"].strip()
+
+def stream_with_ollama(system_prompt, user_prompt):
+    """Stream response from Ollama"""
+    full_response = ""
+    stream = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        think=False,
+        stream=True
+    )
+    
+    for chunk in stream:
+        if 'message' in chunk and 'content' in chunk['message']:
+            text = chunk['message']['content']
+            print(text, end="", flush=True)
+            full_response += text
+        elif 'content' in chunk:
+            text = chunk['content']
+            print(text, end="", flush=True)
+            full_response += text
+    
+    return full_response
 
 # --- 4. MAIN CHAT LOOP ---
 if __name__ == "__main__":
@@ -104,9 +127,10 @@ if __name__ == "__main__":
 
 سؤال المستخدم: {user_query}"""
 
-        # Generate with Ollama
+        # Generate with Ollama with streaming
         try:
-            response = generate_with_ollama(system_prompt, user_block)
-            print(f"\nJEPCO Bot: {response}")
+            print("\nJEPCO Bot: ", end="", flush=True)
+            response = stream_with_ollama(system_prompt, user_block)
+            print()  # Add a newline after streaming
         except Exception as e:
             print(f"An error occurred while generating the answer: {e}")
