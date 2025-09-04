@@ -4,6 +4,9 @@ import numpy as np
 import faiss
 import ollama
 from sentence_transformers import SentenceTransformer
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain.schema import HumanMessage, AIMessage
+import uuid
 
 # --- 1. LOAD ALL MODELS AND INDEXES ---
 print("Loading models and indexes...")
@@ -21,12 +24,24 @@ with open('indexes/bm25_index.pkl', 'rb') as f:
 # Load FAISS index
 faiss_index = faiss.read_index('indexes/faiss_index.bin')
 
-# Choose Ollama model (must be pulled before running: e.g. `ollama pull qwen2:7b` or `ollama create qwen3-8b -f Modelfile`)
 OLLAMA_MODEL = "qwen3:8b"
+
+# --- 2. CHAT MEMORY STORAGE ---
+# Global store for chat sessions
+store = {}
+
+def get_session_history(session_id: str) -> ChatMessageHistory:
+    """
+    Retrieves the chat history for a given session_id.
+    If the session doesn't exist, it creates a new one.
+    """
+    if session_id not in store:
+        store[session_id] = ChatMessageHistory()
+    return store[session_id]
 
 print("Loading complete.")
 
-# --- 2. DEFINE THE HYBRID SEARCH FUNCTION ---
+# --- 3. DEFINE THE HYBRID SEARCH FUNCTION ---
 def hybrid_search(query, k=10):
     # BM25 Search (Keyword)
     tokenized_query = query.split(" ")
@@ -64,7 +79,7 @@ def hybrid_search(query, k=10):
     # Return the original content of the top documents
     return [data[i]['original_content'] for i in sorted_indices]
 
-# --- 3. OLLAMA GENERATION FUNCTIONS ---
+# --- 4. OLLAMA GENERATION FUNCTIONS ---
 def generate_with_ollama(system_prompt, user_prompt):
     response = ollama.chat(
         model=OLLAMA_MODEL,
@@ -85,8 +100,8 @@ def stream_with_ollama(system_prompt, user_prompt):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        think=False,
-        stream=True
+        stream=True,
+        think=False
     )
     
     for chunk in stream:
@@ -101,23 +116,54 @@ def stream_with_ollama(system_prompt, user_prompt):
     
     return full_response
 
-# --- 4. MAIN CHAT LOOP ---
+# --- 5. MAIN CHAT LOOP ---
 if __name__ == "__main__":
-    print("\nJEPCO Chatbot is ready. Type 'exit' to quit.")
+    print("\nJEPCO Chatbot is ready.")
+    print("Type 'exit' to quit, 'new' to start a new session, or 'clear' to clear current session history.")
+    
+    # Generate a unique session ID for this chat session
+    session_id = str(uuid.uuid4())
+    chat_history = get_session_history(session_id)
+    
+    print(f"Session ID: {session_id}")
+    
     while True:
         user_query = input("\nYou: ")
+        
+        # Handle special commands
         if user_query.lower() == 'exit':
             break
-
+        elif user_query.lower() == 'new':
+            # Start a new session
+            session_id = str(uuid.uuid4())
+            chat_history = get_session_history(session_id)
+            print(f"New session started. Session ID: {session_id}")
+            continue
+        elif user_query.lower() == 'clear':
+            # Clear current session history
+            chat_history.clear()
+            print("Current session history cleared.")
+            continue
+        
+        # Add user message to history
+        chat_history.add_user_message(user_query)
+        
         # Retrieve context
         retrieved_context = hybrid_search(user_query, k=5)
         context_str = "\n---\n".join(retrieved_context)
-
-        # Build prompts
+        
+        # Get conversation history for context
+        conversation_history = "\n".join([
+            f"User: {msg.content}" if isinstance(msg, HumanMessage) else f"Assistant: {msg.content}" 
+            for msg in chat_history.messages[:-1]  # Exclude the current message
+        ])
+        
+        # Build prompts with conversation history
         system_prompt = (
             "أنت مساعد افتراضي لشركة الكهرباء الأردنية (JEPCO). "
             "أجب بدقة وباختصار اعتمادًا على المعلومات المتاحة فقط. "
-            "إذا كانت المعلومات غير كافية، قل ذلك بوضوح."
+            "إذا كانت المعلومات غير كافية، قل ذلك بوضوح. "
+            "استخدم سياق المحادثة السابقة للإجابة بشكل مناسب."
         )
 
         user_block = f"""المعلومات المسترجعة:
@@ -125,12 +171,24 @@ if __name__ == "__main__":
 {context_str}
 ---
 
-سؤال المستخدم: {user_query}"""
+تاريخ المحادثة:
+---
+{conversation_history}
+---
+
+سؤال المستخدم الحالي: {user_query}"""
 
         # Generate with Ollama with streaming
         try:
             print("\nJEPCO Bot: ", end="", flush=True)
             response = stream_with_ollama(system_prompt, user_block)
             print()  # Add a newline after streaming
+            
+            # Add assistant response to history
+            chat_history.add_ai_message(response)
+            
         except Exception as e:
             print(f"An error occurred while generating the answer: {e}")
+            # Remove the user message if there was an error
+            if chat_history.messages and isinstance(chat_history.messages[-1], HumanMessage):
+                chat_history.messages.pop()
